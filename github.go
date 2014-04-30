@@ -6,6 +6,7 @@ import (
 	gh "github.com/crosbymichael/octokat"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -401,6 +402,20 @@ func (m *MaintainerManager) PatchIssue(number string, issue *gh.Issue) (*gh.Issu
 	return patchedIssue, err
 }
 
+func (m *MaintainerManager) CreatePullRequest(base, head, title, body string) (*gh.PullRequest, error) {
+	return m.client.CreatePullRequest(
+		m.repo,
+		&gh.Options{
+			Params: map[string]string{
+				"title":	title,
+				"head":		head,
+				"base":		base,
+				"body":		body,
+			},
+		},
+	)
+}
+
 // Patch a pull request
 func (m *MaintainerManager) PatchPullRequest(number string, pr *gh.PullRequest) (*gh.PullRequest, error) {
 	o := &gh.Options{}
@@ -484,3 +499,19 @@ func (m *MaintainerManager) GetIssues(state, assignee string) ([]*gh.Issue, erro
 	}
 	return all, nil
 }
+
+// GenBranchName returns a generated branch name from a human-readable description.
+//
+// For example this:
+//	`GenBranchName("   Hey! let's do awesome stuff...")`
+// Will return this:
+// 	`"hey_let_s_do_awesome_stuff"`
+func GenBranchName(text string) string {
+	toRemove := regexp.MustCompile("(^[[:^alnum:]]+|[[:^alnum:]]$)")
+	toUnderscore := regexp.MustCompile("[[:^alnum:]]+")
+	branchName := strings.ToLower(text)
+	branchName = toRemove.ReplaceAllString(branchName, "")
+	branchName = toUnderscore.ReplaceAllString(branchName, "_")
+	return branchName
+}
+

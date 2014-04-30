@@ -341,10 +341,41 @@ func closeCmd(c *cli.Context) {
 		gordon.Fatalf("Please enter the issue's number")
 	}
 	number := c.Args()[0]
-	if err := m.Close(number); err != nil {
+	if err := m.ClosePullRequest(number); err != nil {
 		gordon.Fatalf("%v", err)
 	}
 	fmt.Printf("Closed PR %s\n", number)
+}
+
+func sendCmd(c *cli.Context) {
+	if nArgs := len(c.Args()); nArgs == 0 {
+		// Push the branch, then create the PR
+		// Pick a remote branch name
+		commitMsg, err := exec.Command("git", "log", "--no-merges", "-1", "--pretty=format:%s", "HEAD").CombinedOutput()
+		if err != nil {
+			gordon.Fatalf("git log: %v", err)
+		}
+		brName := "pr_out_" + gordon.GenBranchName(string(commitMsg))
+		fmt.Printf("remote branch = %s\n", brName)
+		user, err := m.GetGithubUser()
+		if err != nil {
+			gordon.Fatalf("%v", err)
+		}
+		if err := gordon.Git("push", "-f", fmt.Sprintf("ssh://git@github.com/%s/docker", user.Login), "HEAD:"+brName); err != nil {
+			gordon.Fatalf("git push: %v", err)
+		}
+		prBase := "master"
+		prHead := fmt.Sprintf("%s:%s", user.Login, brName)
+		fmt.Printf("Creating pull request from %s to %s\n", prBase, prHead)
+		pr, err := m.CreatePullRequest(prBase, prHead, string(commitMsg), "")
+		if err != nil {
+			gordon.Fatalf("create pull request: %v", err)
+		}
+		fmt.Printf("Created %v\n", pr.Number)
+	} else if nArgs == 1 {
+	} else {
+		gordon.Fatalf("Usage: send [ID]")
+	}
 }
 
 func main() {
