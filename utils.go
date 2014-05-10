@@ -82,6 +82,13 @@ func Git(args ...string) error {
 	return cmd.Run()
 }
 
+fucn GitInOut(input io.Reader, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = os.Stderr
+	return cmd.Output()
+}
+
 func GetTopLevelGitRepo() (string, error) {
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {

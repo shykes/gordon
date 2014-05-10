@@ -349,11 +349,18 @@ func (m *MaintainerManager) MergePullRequest(number, comment string, force bool)
 // It's up to the caller to decide what to do with the checked out
 // branch - typically created a named branch with 'checkout -b'.
 func (m *MaintainerManager) Checkout(pr *gh.PullRequest) error {
-	if err := Git("fetch", pr.Head.Repo.CloneURL, pr.Head.Ref); err != nil {
-		return fmt.Errorf("git fetch: %v", err)
+	if err := m.Fetch(pr); err != nil {
+		return err
 	}
 	if err := Git("checkout", "FETCH_HEAD"); err != nil {
 		return fmt.Errorf("git checkout: %v", err)
+	}
+	return nil
+}
+
+func (m *MaintainerManager) Fetch(pr *gh.PullRequest) error {
+	if err := Git("fetch", pr.Head.Repo.CloneURL, pr.Head.Ref); err != nil {
+		return fmt.Errorf("git fetch: %v", err)
 	}
 	return nil
 }

@@ -113,6 +113,36 @@ func checkoutCmd(c *cli.Context) {
 	}
 }
 
+func newThreadCmd() {
+	thash, err := GitInOut(strings.NewReader(c.String("desc")), "hash-object", "-w", "--stdin")
+	if err != nil {
+		gordon.Fatalf("%v", err)
+	}
+	if err := Git("update-ref", fmt.Sprintf("refs/thread/%s/desc", thash), thash); err != nil {
+		gordon.Fatalf("%v", err)
+	}
+	if err := Git("update-ref", fmt.Sprintf("refs/thread/%s/head", thash), "HEAD"); err != nil {
+		gordon.Fatalf("%v", err)
+	}
+}
+
+func inCmd(c *cli.Context) {
+	prs, err := m.GetPullRequests("open", "")
+	if err != nil {
+		gordon.Fatalf("%v", err)
+	}
+	if err := Git("fetch", pr.Head.Repo.CloneURL, pr.Head.Ref); err != nil {
+		return fmt.Errorf("git fetch: %v", err)
+	}
+	for _, pr := range prs {
+		if err := m.Fetch(pr); err != nil {
+			gordon.Fatalf("%v", err)
+		}
+		prBranch := fmt.Sprintf("pr/gh%s")
+		if err := Git("update-ref", "pr/gh%
+	}
+}
+
 // Approve a pr by adding a LGTM to the comments
 func approveCmd(c *cli.Context) {
 	if !c.Args().Present() {
