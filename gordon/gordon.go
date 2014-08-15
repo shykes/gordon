@@ -37,27 +37,31 @@ func main() {
 	app.Run(os.Args)
 }
 
-func cmdDump(c *cli.Context) {
-	db, err := libpack.Init(".git", "refs/gordon", "0.1")
+func initDb() *libpack.DB {
+	repoPath, err := git.Discover(".", false, nil)
 	if err != nil {
 		Fatalf("%v", err)
 	}
+	fmt.Printf("-> %s\n", repoPath)
+	db, err := libpack.Init(repoPath, "refs/gordon", "0.1")
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	return db
+}
+
+func cmdDump(c *cli.Context) {
+	db := initDb()
+	defer db.Free()
 	if err := db.Dump(os.Stdout); err != nil {
 		Fatalf("%v", err)
 	}
 }
 
 func cmdLog(c *cli.Context) {
-	db, err := libpack.Init(".git", "refs/gordon", "0.1")
-	if err != nil {
-		Fatalf("%v", err)
-	}
+	db := initDb()
 	defer db.Free()
-	repo, err := git.InitRepository(".", false)
-	if err != nil {
-		Fatalf("%v", err)
-	}
-	defer repo.Free()
+	repo := db.Repo()
 	head, err := repo.Head()
 	if err != nil {
 		Fatalf("%v", err)
@@ -92,10 +96,8 @@ func cmdSet(c *cli.Context) {
 	if !c.Args().Present() {
 		Fatalf("usage: set HASH [OP...]")
 	}
-	db, err := libpack.Init(".git", "refs/gordon", "0.1")
-	if err != nil {
-		Fatalf("%v", err)
-	}
+	db := initDb()
+	defer db.Free()
 	hash := c.Args()[0]
 	for _, op := range c.Args()[1:] {
 		var val int
