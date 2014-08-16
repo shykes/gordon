@@ -34,6 +34,11 @@ func main() {
 			Action: cmdDump,
 		},
 		{
+			Name:   "info",
+			Usage:  "",
+			Action: cmdInfo,
+		},
+		{
 			Name:   "signoff",
 			Usage:  "",
 			Action: cmdSignoff,
@@ -97,6 +102,22 @@ func cmdLog(c *cli.Context) {
 	}
 }
 
+func getUserInfo(repo *git.Repository) (name string, email string, err error) {
+	cfg, err := repo.Config()
+	if err != nil {
+		return "", "", err
+	}
+	name, err = cfg.LookupString("user.name")
+	if err != nil {
+		return "", "", err
+	}
+	email, err = cfg.LookupString("user.email")
+	if err != nil {
+		return "", "", err
+	}
+	return
+}
+
 func set(db *libpack.DB, hash string, ops ...string) error {
 	// FIXME: check that the hash exists
 	for _, op := range ops {
@@ -121,6 +142,20 @@ func set(db *libpack.DB, hash string, ops ...string) error {
 		fmt.Printf("---\n")
 	}
 	return nil
+}
+
+func cmdInfo(c *cli.Context) {
+	db := initDb()
+	name, email, err := getUserInfo(db.Repo())
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	fmt.Printf("repo = %s\nDB = %v\nUser name = %s\nUser email = %s\n",
+		db.Repo().Path(),
+		db.Latest(),
+		name,
+		email,
+	)
 }
 
 func cmdSet(c *cli.Context) {
