@@ -208,32 +208,40 @@ func cmdSignoff(c *cli.Context) {
 	}
 	db := initDb()
 	defer db.Free()
-	walker, err := db.Repo().Walk()
-	if err != nil {
-		Fatalf("%v", err)
-	}
-	for _, arg := range c.Args() {
-		if id, err := git.NewOid(arg); err == nil {
-			if err := walker.Push(id); err != nil {
-				Fatalf("%v", err)
-			}
-			continue
-		}
-		if strings.Contains(arg, "..") {
-			if err := walker.PushRange(arg); err != nil {
-				Fatalf("%v", err)
-			}
-		} else {
-			Fatalf("invalid argument: %s", arg)
-		}
-	}
-	if err := walker.Iterate(func(c *git.Commit) bool {
+	setCommit := func(c *git.Commit) bool {
 		if err := set(db, c.Id().String(), SignedOff); err != nil {
 			Fatalf("%v", err)
 		}
 		return true
-	}); err != nil {
-		Fatalf("%v", err)
+	}
+	for _, arg := range c.Args() {
+		if id, err := git.NewOid(arg); err == nil {
+			obj, err := db.Repo().Lookup(id)
+			if err != nil {
+				Fatalf("%v", err)
+			}
+			commit, isCommit := obj.(*git.Commit)
+			if !isCommit {
+				Fatalf("not a commit: %v", id)
+			}
+			setCommit(commit)
+			continue
+		}
+		if strings.Contains(arg, "..") {
+			walker, err := db.Repo().Walk()
+			if err != nil {
+				Fatalf("%v", err)
+			}
+			if err := walker.PushRange(arg); err != nil {
+				Fatalf("%v", err)
+			}
+			if err := walker.Iterate(setCommit); err != nil {
+				Fatalf("%v", err)
+			}
+			walker.Free()
+		} else {
+			Fatalf("invalid argument: %s", arg)
+		}
 	}
 	if err := db.Commit("signoff " + strings.Join(c.Args(), " ")); err != nil {
 		Fatalf("%v", err)
