@@ -104,6 +104,9 @@ func set(db *libpack.DB, hash string, ops ...string) error {
 		if op[0] == '-' {
 			val = -1
 			op = op[1:]
+		} else if op[0] == '+' {
+			val = 1
+			op = op[1:]
 		} else {
 			val = 1
 		}
