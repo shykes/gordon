@@ -170,8 +170,6 @@ func set(db *libpack.DB, hash string, ops ...string) error {
 		if err := db.Set(opPath(hash, op, name, email), fmt.Sprintf("%d", val)); err != nil {
 			return err
 		}
-		db.Dump(os.Stdout)
-		fmt.Printf("---\n")
 	}
 	return nil
 }
