@@ -11,11 +11,20 @@ import (
 	git "github.com/libgit2/git2go"
 )
 
+const (
+	SignedOff = "Signed-off-by"
+	Reviewed  = "Reviewed-by"
+	Acked     = "Acked-by"
+	Tested    = "Tested-by"
+	Reported  = "Reported-by"
+	Suggested = "Suggested-by"
+)
+
 func main() {
 	app := cli.NewApp()
 	app.Name = "pack"
 	app.Usage = "A tool for high-throughput code review"
-	app.Version = "0.0.1"
+	app.Version = "0.0.2"
 	app.Flags = []cli.Flag{}
 	app.Commands = []cli.Command{
 		{
@@ -53,7 +62,7 @@ func initDb() *libpack.DB {
 		Fatalf("%v", err)
 	}
 	fmt.Printf("-> %s\n", repoPath)
-	db, err := libpack.Open(repoPath, "refs/gordon", "0.1")
+	db, err := libpack.Open(repoPath, "refs/gordon", "0.0.2")
 	if err != nil {
 		Fatalf("%v", err)
 	}
@@ -86,13 +95,9 @@ func cmdLog(c *cli.Context) {
 	}
 	for c := commit; c != nil; c = c.Parent(0) {
 		hash := c.Id().String()
-		var signoff bool
-		val, err := db.Get(path.Join("signoff", hash))
+		signoff, err := get(db, hash, SignedOff)
 		if err != nil {
-			// not signed off
-		}
-		if val == "1" {
-			signoff = true
+			Fatalf("%v", err)
 		}
 		if signoff {
 			fmt.Printf("%s OK\n", hash)
@@ -118,7 +123,34 @@ func getUserInfo(repo *git.Repository) (name string, email string, err error) {
 	return
 }
 
+func opPath(hash, op, name, email string) string {
+	return path.Join(hash, op, fmt.Sprintf("%s <%s>", name, email))
+}
+
+func get(db *libpack.DB, hash, op string) (bool, error) {
+	var res bool
+	name, email, err := getUserInfo(db.Repo())
+	if err != nil {
+		return false, err
+	}
+	if name == "" || email == "" {
+		return false, fmt.Errorf("email or username not set in git config")
+	}
+	val, err := db.Get(opPath(hash, op, name, email))
+	if err != nil {
+		res = false
+	}
+	if val == "1" {
+		res = true
+	}
+	return res, nil
+}
+
 func set(db *libpack.DB, hash string, ops ...string) error {
+	name, email, err := getUserInfo(db.Repo())
+	if err != nil {
+		Fatalf("%v", err)
+	}
 	// FIXME: check that the hash exists
 	for _, op := range ops {
 		var val int
@@ -134,8 +166,8 @@ func set(db *libpack.DB, hash string, ops ...string) error {
 		if op == "" {
 			continue
 		}
-		fmt.Printf("Setting %s to %d\n", path.Join(op, hash), val)
-		if err := db.Set(path.Join(op, hash), fmt.Sprintf("%d", val)); err != nil {
+		fmt.Printf("Setting %s to %d\n", path.Join(op, email, hash), val)
+		if err := db.Set(opPath(hash, op, name, email), fmt.Sprintf("%d", val)); err != nil {
 			return err
 		}
 		db.Dump(os.Stdout)
@@ -198,8 +230,7 @@ func cmdSignoff(c *cli.Context) {
 		}
 	}
 	if err := walker.Iterate(func(c *git.Commit) bool {
-		fmt.Printf("Iterate: %v\n", c.Id())
-		if err := set(db, c.Id().String(), "signoff"); err != nil {
+		if err := set(db, c.Id().String(), SignedOff); err != nil {
 			Fatalf("%v", err)
 		}
 		return true
