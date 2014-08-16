@@ -33,6 +33,11 @@ func main() {
 			Usage:  "",
 			Action: cmdDump,
 		},
+		{
+			Name:   "signoff",
+			Usage:  "",
+			Action: cmdSignoff,
+		},
 	}
 	app.Run(os.Args)
 }
@@ -92,14 +97,9 @@ func cmdLog(c *cli.Context) {
 	}
 }
 
-func cmdSet(c *cli.Context) {
-	if !c.Args().Present() {
-		Fatalf("usage: set HASH [OP...]")
-	}
-	db := initDb()
-	defer db.Free()
-	hash := c.Args()[0]
-	for _, op := range c.Args()[1:] {
+func set(db *libpack.DB, hash string, ops ...string) error {
+	// FIXME: check that the hash exists
+	for _, op := range ops {
 		var val int
 		if op[0] == '-' {
 			val = -1
@@ -112,11 +112,63 @@ func cmdSet(c *cli.Context) {
 		}
 		fmt.Printf("Setting %s to %d\n", path.Join(op, hash), val)
 		if err := db.Set(path.Join(op, hash), fmt.Sprintf("%d", val)); err != nil {
-			Fatalf("%v", err)
+			return err
+		}
+		db.Dump(os.Stdout)
+		fmt.Printf("---\n")
+	}
+	return nil
+}
+
+func cmdSet(c *cli.Context) {
+	if !c.Args().Present() {
+		Fatalf("usage: set HASH [OP...]")
+	}
+	db := initDb()
+	defer db.Free()
+	if err := set(db, c.Args()[0], c.Args()[1:]...); err != nil {
+		Fatalf("%v", err)
+	}
+	if err := db.Commit(strings.Join(c.Args(), " ")); err != nil {
+		Fatalf("%v", err)
+	}
+}
+
+func cmdSignoff(c *cli.Context) {
+	if !c.Args().Present() {
+		Fatalf("usage: signoff <since>[...<until]")
+	}
+	db := initDb()
+	defer db.Free()
+	walker, err := db.Repo().Walk()
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	for _, arg := range c.Args() {
+		if id, err := git.NewOid(arg); err == nil {
+			if err := walker.Push(id); err != nil {
+				Fatalf("%v", err)
+			}
+			continue
+		}
+		if strings.Contains(arg, "..") {
+			if err := walker.PushRange(arg); err != nil {
+				Fatalf("%v", err)
+			}
+		} else {
+			Fatalf("invalid argument: %s", arg)
 		}
 	}
-	// FIXME: check that the hash exists
-	if err := db.Commit(strings.Join(c.Args(), " ")); err != nil {
+	if err := walker.Iterate(func(c *git.Commit) bool {
+		fmt.Printf("Iterate: %v\n", c.Id())
+		if err := set(db, c.Id().String(), "signoff"); err != nil {
+			Fatalf("%v", err)
+		}
+		return true
+	}); err != nil {
+		Fatalf("%v", err)
+	}
+	if err := db.Commit("signoff " + strings.Join(c.Args(), " ")); err != nil {
 		Fatalf("%v", err)
 	}
 }
