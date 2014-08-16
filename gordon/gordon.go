@@ -43,7 +43,7 @@ func initDb() *libpack.DB {
 		Fatalf("%v", err)
 	}
 	fmt.Printf("-> %s\n", repoPath)
-	db, err := libpack.Init(repoPath, "refs/gordon", "0.1")
+	db, err := libpack.Open(repoPath, "refs/gordon", "0.1")
 	if err != nil {
 		Fatalf("%v", err)
 	}
