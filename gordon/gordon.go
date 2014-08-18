@@ -66,6 +66,7 @@ func main() {
 type env struct {
 	repo  *git.Repository
 	db    *libpack.DB
+	peers map[string]*libpack.DB
 	name  string
 	email string
 	auth  map[string][]string
@@ -78,12 +79,36 @@ func initEnv() *env {
 		Fatalf("%v", err)
 	}
 	fmt.Printf("-> %s\n", repoPath)
-	db, err := libpack.Open(repoPath, "refs/gordon")
+	db, err := libpack.Open(repoPath, "refs/gordon/me")
 	if err != nil {
 		Fatalf("%v", err)
 	}
 	db = db.Scope("0.0.2")
 	repo := db.Repo()
+
+	// Load peers
+	peerRefs, err := repo.NewReferenceIteratorGlob("refs/gordon/peer/*")
+	if err != nil {
+		Fatalf("git_newreferenceiterator: %v", err)
+	}
+	defer peerRefs.Free()
+	peers := make(map[string]*libpack.DB)
+	for {
+		ref, err := peerRefs.Next()
+		if err == io.EOF || ref == nil {
+			break
+		}
+		if err != nil {
+			Fatalf("git_ref_next: %v", err)
+		}
+		refname := ref.Name()
+		peer, err := libpack.Open(repoPath, refname)
+		if err != nil {
+			Fatalf("git_open %s: %v", refname, err)
+		}
+		_, base := path.Split(refname)
+		peers[base] = peer.Scope("0.0.2")
+	}
 	notes, err := libpack.Open(repoPath, "refs/notes/commits")
 	if err != nil {
 		Fatalf("%v", err)
@@ -104,7 +129,7 @@ func initEnv() *env {
 		Fatalf("email or username not set in git config")
 	}
 
-	entries, err := cfg.NewIteratorGlob("gordon.remote.*")
+	entries, err := cfg.NewIteratorGlob("gordon.peer.*")
 	if err != nil {
 		Fatalf("%v", err)
 	}
@@ -126,22 +151,27 @@ func initEnv() *env {
 			fmt.Fprintf(os.Stderr, "Skipping invalid config entry %s\n", entry.Name)
 			continue
 		}
-		if name[3] != "allow" {
-			fmt.Fprintf(os.Stderr, "Skipping invalid config entry %s\n", entry.Name)
-			continue
-		}
-		remote := name[2]
-		_, exists := auth[remote]
-		if !exists {
-			auth[remote] = []string{entry.Value}
-		} else {
-			auth[remote] = append(auth[remote], entry.Value)
+		switch name[3] {
+			case "allow": {
+				remote := name[2]
+				_, exists := auth[remote]
+				if !exists {
+					auth[remote] = []string{entry.Value}
+				} else {
+					auth[remote] = append(auth[remote], entry.Value)
+				}
+			}
+			default: {
+				fmt.Fprintf(os.Stderr, "Skipping invalid config entry %s\n", entry.Name)
+				continue
+			}
 		}
 	}
 
 	return &env{
 		repo:  repo,
 		db:    db,
+		peers: peers,
 		name:  name,
 		email: email,
 		auth:  auth,
@@ -196,7 +226,7 @@ func cmdLog(c *cli.Context) {
 	}
 	obj, err := e.repo.Lookup(head.Target())
 	if err != nil {
-		Fatalf("%v", err)
+		Fatalf("git_ref_lookup: %v", err)
 	}
 	commit, isCommit := obj.(*git.Commit)
 	if !isCommit {
@@ -204,14 +234,13 @@ func cmdLog(c *cli.Context) {
 	}
 	for c := commit; c != nil; c = c.Parent(0) {
 		hash := c.Id().String()
-		signoff, err := get(e, hash, SignedOff)
+		signoffs, err := get(e, hash, SignedOff)
 		if err != nil {
-			Fatalf("%v", err)
+			Fatalf("get: %v", err)
 		}
-		if signoff {
-			fmt.Printf("%s OK\n", hash)
-		} else {
-			fmt.Printf("%s X\n", hash)
+		fmt.Printf("%s\n", hash)
+		for name, ok := range signoffs {
+			fmt.Printf("\t%s: %v\n", name, ok)
 		}
 	}
 }
@@ -220,14 +249,37 @@ func opPath(hash, op, name, email string) string {
 	return path.Join(hash, op, fmt.Sprintf("%s <%s>", name, email))
 }
 
-func get(e *env, hash, op string) (bool, error) {
-	var res bool
-	val, err := e.db.Get(opPath(hash, op, e.name, e.email))
-	if err != nil {
-		res = false
+func get(e *env, hash, op string) (map[string]bool, error) {
+	p := libpack.NewPipeline(e.repo)
+	e.db.Dump(os.Stdout)
+	me := e.db.Scope(hash, op)
+	fmt.Printf("me (scoped by %s/%s):\n", hash, op)
+	me.Dump(os.Stdout)
+	p = p.Add("/", me, true)
+	for _, peerdb := range e.peers {
+		// FIXME: apply filter
+		p = p.Add("/", peerdb.Scope(hash, op), true)
 	}
-	if val == "1" {
-		res = true
+	tree, err := p.Run()
+	if err != nil {
+		return nil, fmt.Errorf("pipeline_run: %v", err)
+	}
+	defer tree.Free()
+	names, err := libpack.TreeList(e.repo, tree, "/")
+	if err != nil {
+		return nil, fmt.Errorf("treelist: %v", err)
+	}
+	res := make(map[string]bool)
+	for _, k := range names {
+		val, err := libpack.TreeGet(e.repo, tree, k)
+		if err != nil {
+			return nil, fmt.Errorf("treeget %s: %v", k, err)
+		}
+		if val == "1" {
+			res[k] = true
+		} else {
+			res[k] = false
+		}
 	}
 	return res, nil
 }
