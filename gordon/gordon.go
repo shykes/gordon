@@ -54,6 +54,11 @@ func main() {
 			Usage:  "",
 			Action: cmdSignoff,
 		},
+		{
+			Name:   "pull",
+			Usage:  "",
+			Action: cmdPull,
+		},
 	}
 	app.Run(os.Args)
 }
@@ -322,6 +327,28 @@ func cmdSignoff(c *cli.Context) {
 		}
 	}
 	if err := e.db.Commit("signoff " + strings.Join(c.Args(), " ")); err != nil {
+		Fatalf("%v", err)
+	}
+}
+
+func cmdPull(c *cli.Context) {
+	if len(c.Args()) != 2 {
+		Fatalf("usage: pull URL REF")
+	}
+	var (
+		url = c.Args()[0]
+		ref = c.Args()[1]
+	)
+	e := initEnv()
+	defer syncNotes(e)
+	peer, err := libpack.Open(e.repo.Path(), ref)
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	if err := peer.Pull(url, ""); err != nil {
+		Fatalf("%v", err)
+	}
+	if err := peer.Dump(os.Stdout); err != nil {
 		Fatalf("%v", err)
 	}
 }
