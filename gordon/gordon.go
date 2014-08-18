@@ -144,7 +144,6 @@ func initEnv() *env {
 }
 
 func syncNotes(e *env) {
-	fmt.Printf("syncnotes")
 	hashes, err := e.db.List("/")
 	if err != nil {
 		Fatalf("%v", err)
