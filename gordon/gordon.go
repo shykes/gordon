@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/codegangsta/cli"
@@ -153,22 +154,19 @@ func syncNotes(e *env) {
 		if err != nil {
 			Fatalf("%v", err)
 		}
+		var note []string
 		for _, s := range signoffs {
 			names, err := e.db.List(path.Join("/", h, s))
 			if err != nil {
 				Fatalf("%v", err)
 			}
 			for _, n := range names {
-				var val string
-				var err error
-				val, err = e.notes.Get(h)
-				if err != nil {
-					val = ""
-				}
-				if err := e.notes.Set(h, fmt.Sprintf("%s\n%s: %s\n", val, s, n)); err != nil {
-					Fatalf("%v", err)
-				}
+				note = append(note, fmt.Sprintf("%s: %s", s, n))
 			}
+		}
+		sort.Strings(note)
+		if err := e.notes.Set(h, strings.Join(note, "\n")+"\n"); err != nil {
+			Fatalf("%v", err)
 		}
 	}
 	if err := e.notes.Commit("sync"); err != nil {
