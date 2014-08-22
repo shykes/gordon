@@ -56,36 +56,61 @@ func main() {
 	app.Run(os.Args)
 }
 
-func initDb() *libpack.DB {
+type env struct {
+	repo  *git.Repository
+	db    libpack.DB
+	name  string
+	email string
+}
+
+func initEnv() *env {
 	repoPath, err := git.Discover(".", false, nil)
 	if err != nil {
 		Fatalf("%v", err)
 	}
 	fmt.Printf("-> %s\n", repoPath)
-	db, err := libpack.Open(repoPath, "refs/gordon", "0.0.2")
+	br, err := libpack.GitOpen(repoPath, "refs/gordon", "0.0.2")
 	if err != nil {
 		Fatalf("%v", err)
 	}
-	return db
+	repo := br.Repo()
+	cfg, err := repo.Config()
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	name, err := cfg.LookupString("user.name")
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	email, err := cfg.LookupString("user.email")
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	if name == "" || email == "" {
+		Fatalf("email or username not set in git config")
+	}
+	return &env{
+		repo:  repo,
+		db:    br,
+		name:  name,
+		email: email,
+	}
 }
 
 func cmdDump(c *cli.Context) {
-	db := initDb()
-	defer db.Free()
-	if err := db.Dump(os.Stdout); err != nil {
+	e := initEnv()
+	if err := libpack.Dump(e.db, os.Stdout); err != nil {
 		Fatalf("%v", err)
 	}
 }
 
 func cmdLog(c *cli.Context) {
-	db := initDb()
-	defer db.Free()
-	repo := db.Repo()
-	head, err := repo.Head()
+	e := initEnv()
+	head, err := e.repo.Head()
 	if err != nil {
 		Fatalf("%v", err)
 	}
-	obj, err := repo.Lookup(head.Target())
+	obj, err := e.repo.Lookup(head.Target())
 	if err != nil {
 		Fatalf("%v", err)
 	}
@@ -95,7 +120,7 @@ func cmdLog(c *cli.Context) {
 	}
 	for c := commit; c != nil; c = c.Parent(0) {
 		hash := c.Id().String()
-		signoff, err := get(db, hash, SignedOff)
+		signoff, err := get(e, hash, SignedOff)
 		if err != nil {
 			Fatalf("%v", err)
 		}
@@ -107,36 +132,13 @@ func cmdLog(c *cli.Context) {
 	}
 }
 
-func getUserInfo(repo *git.Repository) (name string, email string, err error) {
-	cfg, err := repo.Config()
-	if err != nil {
-		return "", "", err
-	}
-	name, err = cfg.LookupString("user.name")
-	if err != nil {
-		return "", "", err
-	}
-	email, err = cfg.LookupString("user.email")
-	if err != nil {
-		return "", "", err
-	}
-	return
-}
-
 func opPath(hash, op, name, email string) string {
 	return path.Join(hash, op, fmt.Sprintf("%s <%s>", name, email))
 }
 
-func get(db *libpack.DB, hash, op string) (bool, error) {
+func get(e *env, hash, op string) (bool, error) {
 	var res bool
-	name, email, err := getUserInfo(db.Repo())
-	if err != nil {
-		return false, err
-	}
-	if name == "" || email == "" {
-		return false, fmt.Errorf("email or username not set in git config")
-	}
-	val, err := db.Get(opPath(hash, op, name, email))
+	val, err := e.db.Get(opPath(hash, op, e.name, e.email))
 	if err != nil {
 		res = false
 	}
@@ -146,11 +148,7 @@ func get(db *libpack.DB, hash, op string) (bool, error) {
 	return res, nil
 }
 
-func set(db *libpack.DB, hash string, ops ...string) error {
-	name, email, err := getUserInfo(db.Repo())
-	if err != nil {
-		Fatalf("%v", err)
-	}
+func set(e *env, hash string, ops ...string) error {
 	// FIXME: check that the hash exists
 	for _, op := range ops {
 		var val int
@@ -166,8 +164,7 @@ func set(db *libpack.DB, hash string, ops ...string) error {
 		if op == "" {
 			continue
 		}
-		fmt.Printf("Setting %s to %d\n", path.Join(op, email, hash), val)
-		if err := db.Set(opPath(hash, op, name, email), fmt.Sprintf("%d", val)); err != nil {
+		if err := e.db.Set(opPath(hash, op, e.name, e.email), fmt.Sprintf("%d", val)); err != nil {
 			return err
 		}
 	}
@@ -175,16 +172,12 @@ func set(db *libpack.DB, hash string, ops ...string) error {
 }
 
 func cmdInfo(c *cli.Context) {
-	db := initDb()
-	name, email, err := getUserInfo(db.Repo())
-	if err != nil {
-		Fatalf("%v", err)
-	}
+	e := initEnv()
 	fmt.Printf("repo = %s\nDB = %v\nUser name = %s\nUser email = %s\n",
-		db.Repo().Path(),
-		db.Latest(),
-		name,
-		email,
+		e.repo.Path(),
+		e.db.(*libpack.GitBranch).Latest(),
+		e.name,
+		e.email,
 	)
 }
 
@@ -192,12 +185,11 @@ func cmdSet(c *cli.Context) {
 	if !c.Args().Present() {
 		Fatalf("usage: set HASH [OP...]")
 	}
-	db := initDb()
-	defer db.Free()
-	if err := set(db, c.Args()[0], c.Args()[1:]...); err != nil {
+	e := initEnv()
+	if err := set(e, c.Args()[0], c.Args()[1:]...); err != nil {
 		Fatalf("%v", err)
 	}
-	if err := db.Commit(strings.Join(c.Args(), " ")); err != nil {
+	if err := e.db.Commit(strings.Join(c.Args(), " ")); err != nil {
 		Fatalf("%v", err)
 	}
 }
@@ -206,17 +198,16 @@ func cmdSignoff(c *cli.Context) {
 	if !c.Args().Present() {
 		Fatalf("usage: signoff <since>[...<until]")
 	}
-	db := initDb()
-	defer db.Free()
+	e := initEnv()
 	setCommit := func(c *git.Commit) bool {
-		if err := set(db, c.Id().String(), SignedOff); err != nil {
+		if err := set(e, c.Id().String(), SignedOff); err != nil {
 			Fatalf("%v", err)
 		}
 		return true
 	}
 	for _, arg := range c.Args() {
 		if id, err := git.NewOid(arg); err == nil {
-			obj, err := db.Repo().Lookup(id)
+			obj, err := e.repo.Lookup(id)
 			if err != nil {
 				Fatalf("%v", err)
 			}
@@ -228,7 +219,7 @@ func cmdSignoff(c *cli.Context) {
 			continue
 		}
 		if strings.Contains(arg, "..") {
-			walker, err := db.Repo().Walk()
+			walker, err := e.repo.Walk()
 			if err != nil {
 				Fatalf("%v", err)
 			}
@@ -243,7 +234,7 @@ func cmdSignoff(c *cli.Context) {
 			Fatalf("invalid argument: %s", arg)
 		}
 	}
-	if err := db.Commit("signoff " + strings.Join(c.Args(), " ")); err != nil {
+	if err := e.db.Commit("signoff " + strings.Join(c.Args(), " ")); err != nil {
 		Fatalf("%v", err)
 	}
 }
