@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
@@ -61,6 +62,7 @@ type env struct {
 	db    *libpack.DB
 	name  string
 	email string
+	auth  map[string][]string
 }
 
 func initEnv() *env {
@@ -90,11 +92,48 @@ func initEnv() *env {
 	if name == "" || email == "" {
 		Fatalf("email or username not set in git config")
 	}
+
+	entries, err := cfg.NewIteratorGlob("gordon.remote.*")
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	defer entries.Free()
+	auth := make(map[string][]string)
+	for {
+		entry, err := entries.Next()
+		if err == io.EOF {
+			break
+		}
+		if entry == nil {
+			break
+		}
+		if err != nil {
+			Fatalf("%v", err)
+		}
+		name := strings.Split(entry.Name, ".")
+		if len(name) != 4 {
+			fmt.Fprintf(os.Stderr, "Skipping invalid config entry %s\n", entry.Name)
+			continue
+		}
+		if name[3] != "allow" {
+			fmt.Fprintf(os.Stderr, "Skipping invalid config entry %s\n", entry.Name)
+			continue
+		}
+		remote := name[2]
+		_, exists := auth[remote]
+		if !exists {
+			auth[remote] = []string{entry.Value}
+		} else {
+			auth[remote] = append(auth[remote], entry.Value)
+		}
+	}
+
 	return &env{
 		repo:  repo,
 		db:    db,
 		name:  name,
 		email: email,
+		auth:  auth,
 	}
 }
 
@@ -180,6 +219,11 @@ func cmdInfo(c *cli.Context) {
 		e.name,
 		e.email,
 	)
+	for remote, rules := range e.auth {
+		for _, r := range rules {
+			fmt.Printf("auth: allow '%s' from '%s'\n", r, remote)
+		}
+	}
 }
 
 func cmdSet(c *cli.Context) {
