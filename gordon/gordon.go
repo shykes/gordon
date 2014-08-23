@@ -58,7 +58,7 @@ func main() {
 
 type env struct {
 	repo  *git.Repository
-	db    libpack.DB
+	db    *libpack.DB
 	name  string
 	email string
 }
@@ -69,11 +69,12 @@ func initEnv() *env {
 		Fatalf("%v", err)
 	}
 	fmt.Printf("-> %s\n", repoPath)
-	br, err := libpack.GitOpen(repoPath, "refs/gordon", "0.0.2")
+	db, err := libpack.Open(repoPath, "refs/gordon")
 	if err != nil {
 		Fatalf("%v", err)
 	}
-	repo := br.Repo()
+	db = db.Scope("0.0.2")
+	repo := db.Repo()
 	cfg, err := repo.Config()
 	if err != nil {
 		Fatalf("%v", err)
@@ -91,7 +92,7 @@ func initEnv() *env {
 	}
 	return &env{
 		repo:  repo,
-		db:    br,
+		db:    db,
 		name:  name,
 		email: email,
 	}
@@ -99,7 +100,7 @@ func initEnv() *env {
 
 func cmdDump(c *cli.Context) {
 	e := initEnv()
-	if err := libpack.Dump(e.db, os.Stdout); err != nil {
+	if err := e.db.Dump(os.Stdout); err != nil {
 		Fatalf("%v", err)
 	}
 }
@@ -175,7 +176,7 @@ func cmdInfo(c *cli.Context) {
 	e := initEnv()
 	fmt.Printf("repo = %s\nDB = %v\nUser name = %s\nUser email = %s\n",
 		e.repo.Path(),
-		e.db.(*libpack.GitBranch).Latest(),
+		e.db.Latest(),
 		e.name,
 		e.email,
 	)
