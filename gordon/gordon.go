@@ -63,6 +63,7 @@ type env struct {
 	name  string
 	email string
 	auth  map[string][]string
+	notes *libpack.DB
 }
 
 func initEnv() *env {
@@ -77,6 +78,10 @@ func initEnv() *env {
 	}
 	db = db.Scope("0.0.2")
 	repo := db.Repo()
+	notes, err := libpack.Open(repoPath, "refs/notes/commits")
+	if err != nil {
+		Fatalf("%v", err)
+	}
 	cfg, err := repo.Config()
 	if err != nil {
 		Fatalf("%v", err)
@@ -134,11 +139,47 @@ func initEnv() *env {
 		name:  name,
 		email: email,
 		auth:  auth,
+		notes: notes,
+	}
+}
+
+func syncNotes(e *env) {
+	fmt.Printf("syncnotes")
+	hashes, err := e.db.List("/")
+	if err != nil {
+		Fatalf("%v", err)
+	}
+	for _, h := range hashes {
+		signoffs, err := e.db.List(path.Join("/", h))
+		if err != nil {
+			Fatalf("%v", err)
+		}
+		for _, s := range signoffs {
+			names, err := e.db.List(path.Join("/", h, s))
+			if err != nil {
+				Fatalf("%v", err)
+			}
+			for _, n := range names {
+				var val string
+				var err error
+				val, err = e.notes.Get(h)
+				if err != nil {
+					val = ""
+				}
+				if err := e.notes.Set(h, fmt.Sprintf("%s\n%s: %s\n", val, s, n)); err != nil {
+					Fatalf("%v", err)
+				}
+			}
+		}
+	}
+	if err := e.notes.Commit("sync"); err != nil {
+		Fatalf("%v", err)
 	}
 }
 
 func cmdDump(c *cli.Context) {
 	e := initEnv()
+	defer syncNotes(e)
 	if err := e.db.Dump(os.Stdout); err != nil {
 		Fatalf("%v", err)
 	}
@@ -146,6 +187,7 @@ func cmdDump(c *cli.Context) {
 
 func cmdLog(c *cli.Context) {
 	e := initEnv()
+	defer syncNotes(e)
 	head, err := e.repo.Head()
 	if err != nil {
 		Fatalf("%v", err)
@@ -213,6 +255,7 @@ func set(e *env, hash string, ops ...string) error {
 
 func cmdInfo(c *cli.Context) {
 	e := initEnv()
+	defer syncNotes(e)
 	fmt.Printf("repo = %s\nDB = %v\nUser name = %s\nUser email = %s\n",
 		e.repo.Path(),
 		e.db.Latest(),
@@ -231,6 +274,7 @@ func cmdSet(c *cli.Context) {
 		Fatalf("usage: set HASH [OP...]")
 	}
 	e := initEnv()
+	defer syncNotes(e)
 	if err := set(e, c.Args()[0], c.Args()[1:]...); err != nil {
 		Fatalf("%v", err)
 	}
@@ -244,6 +288,7 @@ func cmdSignoff(c *cli.Context) {
 		Fatalf("usage: signoff <since>[...<until]")
 	}
 	e := initEnv()
+	defer syncNotes(e)
 	setCommit := func(c *git.Commit) bool {
 		if err := set(e, c.Id().String(), SignedOff); err != nil {
 			Fatalf("%v", err)
